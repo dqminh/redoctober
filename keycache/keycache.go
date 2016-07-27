@@ -155,21 +155,35 @@ func (cache *Cache) GetSummary() map[string]ActiveUser {
 	return summaryData
 }
 
-// FlushCache removes all delegated keys.
-func (cache *Cache) FlushCache() {
+// FlushCache removes all delegated keys. It returns true if the cache
+// wasn't empty (i.e. there were active users removed), and false if
+// the cache was empty.
+func (cache *Cache) Flush() bool {
+	if len(cache.UserKeys) == 0 {
+		return false
+	}
+
 	for d := range cache.UserKeys {
 		delete(cache.UserKeys, d)
 	}
+
+	return true
 }
 
-// Refresh purges all expired or used up keys.
-func (cache *Cache) Refresh() {
+// Refresh purges all expired keys. It returns the number of
+// delegations that were removed.
+func (cache *Cache) Refresh() int {
+	var removed int
+
 	for d, active := range cache.UserKeys {
 		if active.Usage.Expiry.Before(time.Now()) {
 			log.Println("Record expired", d.Name, d.Slot, active.Usage.Users, active.Usage.Labels, active.Usage.Expiry)
+			removed++
 			delete(cache.UserKeys, d)
 		}
 	}
+
+	return removed
 }
 
 // AddKeyFromRecord decrypts a key for a given record and adds it to the cache.

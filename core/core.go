@@ -23,7 +23,6 @@ import (
 var (
 	crypt   cryptor.Cryptor
 	records passvault.Records
-	cache   keycache.Cache
 	orders  order.Orderer
 )
 
@@ -199,7 +198,7 @@ func jsonStatusError(err error) ([]byte, error) {
 	return json.Marshal(ResponseData{Status: err.Error()})
 }
 func jsonSummary() ([]byte, error) {
-	return json.Marshal(SummaryData{Status: "ok", Live: cache.GetSummary(), All: records.GetSummary()})
+	return json.Marshal(SummaryData{Status: "ok", Live: crypt.LiveSummary(), All: records.GetSummary()})
 }
 func jsonResponse(resp []byte) ([]byte, error) {
 	return json.Marshal(ResponseData{Status: "ok", Response: resp})
@@ -276,8 +275,7 @@ func Init(path string, config *config.Config) error {
 	restore.State = PDStateNeverPersist
 
 	orders = order.NewOrderer(hipchatClient)
-	cache = keycache.Cache{UserKeys: make(map[keycache.DelegateIndex]keycache.ActiveUser)}
-	crypt = cryptor.New(&records, &cache)
+	crypt = cryptor.New(&records, nil)
 
 	return err
 }
@@ -320,7 +318,7 @@ func Create(jsonIn []byte) ([]byte, error) {
 func Summary(jsonIn []byte) ([]byte, error) {
 	var s SummaryRequest
 	var err error
-	cache.Refresh()
+	crypt.Refresh()
 
 	defer func() {
 		if err != nil {
@@ -373,7 +371,7 @@ func Purge(jsonIn []byte) ([]byte, error) {
 		return jsonStatusError(err)
 	}
 
-	cache.FlushCache()
+	crypt.Flush()
 	return jsonStatusOk()
 }
 
@@ -426,7 +424,7 @@ func Delegate(jsonIn []byte) ([]byte, error) {
 	}
 
 	// add signed-in record to active set
-	if err = cache.AddKeyFromRecord(pr, s.Name, s.Password, s.Users, s.Labels, s.Uses, s.Slot, s.Time); err != nil {
+	if err = crypt.Delegate(pr, s.Name, s.Password, s.Users, s.Labels, s.Uses, s.Slot, s.Time); err != nil {
 		return jsonStatusError(err)
 	}
 
@@ -808,14 +806,14 @@ func Order(jsonIn []byte) (out []byte, err error) {
 		err = errors.New("Number of required uses necessary when placing an order.")
 		jsonStatusError(err)
 	}
-	cache.Refresh()
+	crypt.Refresh()
 	orderNum := order.GenerateNum()
 
 	if len(o.Users) == 0 {
 		err = errors.New("Must specify at least one user per order.")
 		jsonStatusError(err)
 	}
-	adminsDelegated, numDelegated := cache.DelegateStatus(o.Users[0], o.Labels, owners)
+	adminsDelegated, numDelegated := crypt.DelegateStatus(o.Users[0], o.Labels, owners)
 	duration, err := time.ParseDuration(o.Duration)
 	if err != nil {
 		jsonStatusError(err)

@@ -32,6 +32,9 @@ type Cryptor struct {
 }
 
 func New(records *passvault.Records, cache *keycache.Cache) Cryptor {
+	if cache == nil {
+		cache = &keycache.Cache{UserKeys: make(map[keycache.DelegateIndex]keycache.ActiveUser)}
+	}
 	return Cryptor{records, cache}
 }
 
@@ -641,4 +644,33 @@ func (c *Cryptor) GetOwners(in []byte) (names []string, predicate string, err er
 	predicate = encrypted.Predicate
 
 	return
+}
+
+// LiveSummary returns a list of the users currently delegated.
+func (c *Cryptor) LiveSummary() map[string]keycache.ActiveUser {
+	return c.cache.GetSummary()
+}
+
+// Refresh purges all expired or fully-used delegations in the
+// crypto's key cache. It returns the number of delegations that
+// were removed.
+func (c *Cryptor) Refresh() int {
+	return c.cache.Refresh()
+}
+
+// Flush removes all delegations.
+func (c *Cryptor) Flush() bool {
+	return c.cache.Flush()
+}
+
+// Delegate attempts to decrypt a key for the specified user and add
+// the key to the key cache.
+func (c *Cryptor) Delegate(record passvault.PasswordRecord, name, password string, users, labels []string, uses int, slot, durationString string) (err error) {
+	return c.cache.AddKeyFromRecord(record, name, password, users, labels, uses, slot, durationString)
+}
+
+// DelegateStatus will return a list of admins who have delegated to a particular user, for a particular label.
+// This is useful information to have when determining the status of an order and conveying order progress.
+func (c *Cryptor) DelegateStatus(name string, labels, admins []string) (adminsDelegated []string, hasDelegated int) {
+	return c.cache.DelegateStatus(name, labels, admins)
 }

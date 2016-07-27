@@ -32,7 +32,11 @@ func TestUsesFlush(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 
-	cache.Refresh()
+	removed := cache.Refresh()
+	if removed != 0 {
+		t.Fatalf("No active users should have been removed")
+	}
+
 	if len(cache.UserKeys) != 1 {
 		t.Fatalf("Error in number of live keys")
 	}
@@ -150,7 +154,6 @@ func TestGoodLabel(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 
-	cache.Refresh()
 	if len(cache.UserKeys) != 0 {
 		t.Fatalf("Error in number of live keys %v", cache.UserKeys)
 	}
@@ -289,5 +292,45 @@ func TestBadUser(t *testing.T) {
 	cache.Refresh()
 	if len(cache.UserKeys) != 1 {
 		t.Fatalf("Error in number of live keys %v", cache.UserKeys)
+	}
+}
+
+func TestRefresh(t *testing.T) {
+	records, err := passvault.InitFrom("memory")
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	pr, err := records.AddNewRecord("user", "weakpassword", true, passvault.DefaultRecordType)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	cache := NewCache()
+
+	err = cache.AddKeyFromRecord(
+		pr, "user", "weakpassword",
+		[]string{"ci", "buildeng", "user"},
+		[]string{"red", "blue"},
+		1, "", "1s",
+	)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+
+	removed := cache.Refresh()
+	if removed != 0 {
+		t.Fatalf("Refresh should not have removed any active users.")
+	}
+
+	time.Sleep(2 * time.Second)
+
+	removed = cache.Refresh()
+	if removed != 1 {
+		t.Fatalf("Refresh should have removed an active user, removed %d", removed)
+	}
+
+	if len(cache.GetSummary()) != 0 {
+		t.Fatalf("There should be no active users in the cache, but there are %d", len(cache.GetSummary()))
 	}
 }

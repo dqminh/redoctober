@@ -117,6 +117,6 @@ func TestDuplicates(t *testing.T) {
 			t.Fatalf("That shouldn't have worked!")
 		}
 
-		cache.FlushCache()
+		cache.Flush()
 	}
 }
