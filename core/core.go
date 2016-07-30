@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	crypt   cryptor.Cryptor
+	crypt   *cryptor.Cryptor
 	records passvault.Records
 	orders  order.Orderer
 )
@@ -275,7 +275,7 @@ func Init(path string, config *config.Config) error {
 	restore.State = PDStateNeverPersist
 
 	orders = order.NewOrderer(hipchatClient)
-	crypt = cryptor.New(&records, nil)
+	crypt, err = cryptor.New(&records, nil, config)
 
 	return err
 }

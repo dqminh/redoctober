@@ -12,13 +12,17 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
 	"sort"
 	"strconv"
 
+	"github.com/cloudflare/redoctober/config"
 	"github.com/cloudflare/redoctober/keycache"
 	"github.com/cloudflare/redoctober/msp"
 	"github.com/cloudflare/redoctober/padding"
 	"github.com/cloudflare/redoctober/passvault"
+	"github.com/cloudflare/redoctober/persist"
 	"github.com/cloudflare/redoctober/symcrypt"
 )
 
@@ -29,13 +33,25 @@ const (
 type Cryptor struct {
 	records *passvault.Records
 	cache   *keycache.Cache
+	persist persist.Store
 }
 
-func New(records *passvault.Records, cache *keycache.Cache) Cryptor {
+func New(records *passvault.Records, cache *keycache.Cache, config *config.Config) (*Cryptor, error) {
 	if cache == nil {
 		cache = &keycache.Cache{UserKeys: make(map[keycache.DelegateIndex]keycache.ActiveUser)}
 	}
-	return Cryptor{records, cache}
+
+	store, err := persist.New(config.Delegations)
+	if err != nil {
+		return nil, err
+	}
+
+	c := &Cryptor{
+		records: records,
+		cache:   cache,
+		persist: store,
+	}
+	return c, nil
 }
 
 // AccessStructure represents different possible access structures for
@@ -528,6 +544,10 @@ func (c *Cryptor) Encrypt(in []byte, labels []string, access AccessStructure) (r
 
 // Decrypt decrypts a file using the keys in the key cache.
 func (c *Cryptor) Decrypt(in []byte, user string) (resp []byte, labels, names []string, secure bool, err error) {
+	return c.decrypt(c.cache, in, user)
+}
+
+func (c *Cryptor) decrypt(cache *keycache.Cache, in []byte, user string) (resp []byte, labels, names []string, secure bool, err error) {
 	// unwrap encrypted file
 	var encrypted EncryptedData
 	if err = json.Unmarshal(in, &encrypted); err != nil {
@@ -566,7 +586,7 @@ func (c *Cryptor) Decrypt(in []byte, user string) (resp []byte, labels, names []
 
 	// decrypt file key with delegate keys
 	var unwrappedKey = make([]byte, 16)
-	unwrappedKey, names, err = encrypted.unwrapKey(c.cache, user)
+	unwrappedKey, names, err = encrypted.unwrapKey(cache, user)
 	if err != nil {
 		return
 	}
@@ -583,6 +603,7 @@ func (c *Cryptor) Decrypt(in []byte, user string) (resp []byte, labels, names []
 
 	resp, err = padding.RemovePadding(clearData)
 	labels = encrypted.Labels
+	fmt.Fprintf(os.Stderr, "resp: '%s'\n", resp)
 	return
 }
 
@@ -673,4 +694,52 @@ func (c *Cryptor) Delegate(record passvault.PasswordRecord, name, password strin
 // This is useful information to have when determining the status of an order and conveying order progress.
 func (c *Cryptor) DelegateStatus(name string, labels, admins []string) (adminsDelegated []string, hasDelegated int) {
 	return c.cache.DelegateStatus(name, labels, admins)
+}
+
+var (
+	persistLabels = []string{"restore"}
+	persistUsers  = []string{"restore"}
+)
+
+// store serialises the key cache, encrypts it, and writes it to disk.
+func (c *Cryptor) store() error {
+	cache, err := json.Marshal(c.cache.GetSummary())
+	if err != nil {
+		return err
+	}
+
+	access := AccessStructure{
+		Names:     persistUsers,
+		Predicate: c.persist.Policy(),
+	}
+
+	cache, err = c.Encrypt(cache, persistLabels, access)
+	if err != nil {
+		return err
+	}
+
+	return c.persist.Store(cache)
+}
+
+func (c *Cryptor) Restore(record passvault.PasswordRecord, name, password string, uses int, slot, durationString string) error {
+	err := c.persist.Delegate(record, name, password, persistUsers, persistLabels, uses, slot, durationString)
+	if err != nil {
+		return err
+	}
+
+	// A failure to decrypt isn't an error, it just means there
+	// aren't enough delegations yet.
+	cache, _, _, _, err := c.decrypt(c.persist.Cache(), c.persist.Blob(), name)
+	if err != nil {
+		return nil
+	}
+
+	var kc keycache.Cache
+	err = json.Unmarshal(cache, &kc.UserKeys)
+	if err != nil {
+		return err
+	}
+
+	c.cache = &kc
+	return nil
 }
